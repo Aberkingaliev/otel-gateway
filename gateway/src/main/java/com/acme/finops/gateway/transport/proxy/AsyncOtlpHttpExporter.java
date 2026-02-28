@@ -26,7 +26,6 @@ import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
-import io.netty.util.ReferenceCountUtil;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.FutureListener;
 
@@ -210,9 +209,11 @@ public final class AsyncOtlpHttpExporter implements AutoCloseable {
             }
             ch.writeAndFlush(req).addListener((ChannelFutureListener) writeFuture -> {
                 if (!writeFuture.isSuccess()) {
-                    ReferenceCountUtil.safeRelease(req);
+                    // Netty's pipeline already releases the message on write failure,
+                    // so do NOT call ReferenceCountUtil.safeRelease(req) here — that
+                    // would double-release the underlying payload ByteBuf.
                     result.completeExceptionally(writeFuture.cause());
-                    writeFuture.channel().close();
+                    ch.close();
                 }
             });
         });
@@ -283,6 +284,7 @@ public final class AsyncOtlpHttpExporter implements AutoCloseable {
         private final CompletableFuture<Integer> result;
         private final SimpleChannelPool pool;
         private final Channel channel;
+        private boolean channelReturned;
 
         private ExportResponseHandler(CompletableFuture<Integer> result, SimpleChannelPool pool, Channel channel) {
             this.result = result;
@@ -293,7 +295,7 @@ public final class AsyncOtlpHttpExporter implements AutoCloseable {
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, FullHttpResponse msg) {
             result.complete(msg.status().code());
-            pool.release(channel);
+            returnToPool();
         }
 
         @Override
@@ -307,7 +309,23 @@ public final class AsyncOtlpHttpExporter implements AutoCloseable {
             if (!result.isDone()) {
                 result.completeExceptionally(new IllegalStateException("upstream closed before response"));
             }
+            // Channel is dead — return it so the pool can discard and create a fresh one.
+            returnToPool();
             ctx.fireChannelInactive();
+        }
+
+        private void returnToPool() {
+            if (!channelReturned) {
+                channelReturned = true;
+                if (channel.isActive()) {
+                    pool.release(channel);
+                } else {
+                    // Dead channel: close explicitly to release the OS socket fd,
+                    // then return to pool so it can update its bookkeeping.
+                    channel.close();
+                    pool.release(channel);
+                }
+            }
         }
     }
 
