@@ -197,8 +197,10 @@ public final class NettyGatewayProxyMain {
         int allocatorShards = Integer.highestOneBit(
             EnvVars.getIntClamped(GatewayEnvKeys.GATEWAY_ALLOCATOR_SHARDS,
                 GatewayDefaults.DEFAULT_ALLOCATOR_SHARDS, 1, 64));
+        long slabSizeBytes = EnvVars.getLongClamped(GatewayEnvKeys.GATEWAY_SLAB_SIZE_BYTES,
+            GatewayDefaults.DEFAULT_SLAB_SIZE_BYTES, 64L * 1024 * 1024, 8L * 1024 * 1024 * 1024);
         PacketAllocator allocator = new StripedPacketAllocator(
-            GatewayDefaults.DEFAULT_SLAB_SIZE_BYTES, allocatorShards);
+            slabSizeBytes, allocatorShards);
         NettyOtlpGrpcAdapter grpcAdapter = new NettyOtlpGrpcAdapter(
             grpcPort,
             allocator,

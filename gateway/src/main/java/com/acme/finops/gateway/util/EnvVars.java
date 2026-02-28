@@ -23,6 +23,10 @@ public final class EnvVars {
         return getIntClamped(System.getenv(), name, defaultValue, min, max);
     }
 
+    public static long getLongClamped(String name, long defaultValue, long min, long max) {
+        return getLongClamped(System.getenv(), name, defaultValue, min, max);
+    }
+
     public static double getDoubleClamped(String name, double defaultValue, double min, double max) {
         return getDoubleClamped(System.getenv(), name, defaultValue, min, max);
     }
@@ -47,6 +51,20 @@ public final class EnvVars {
         }
         try {
             int parsed = Integer.parseInt(raw.trim());
+            if (parsed < min) return min;
+            return Math.min(parsed, max);
+        } catch (NumberFormatException _) {
+            return defaultValue;
+        }
+    }
+
+    public static long getLongClamped(Map<String, String> env, String name, long defaultValue, long min, long max) {
+        String raw = env.get(name);
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            long parsed = Long.parseLong(raw.trim());
             if (parsed < min) return min;
             return Math.min(parsed, max);
         } catch (NumberFormatException _) {

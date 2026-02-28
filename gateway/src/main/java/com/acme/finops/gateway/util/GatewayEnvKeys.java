@@ -23,6 +23,7 @@ public final class GatewayEnvKeys {
     public static final String GATEWAY_QUEUE_CAPACITY = "GATEWAY_QUEUE_CAPACITY";
     public static final String GATEWAY_QUEUE_SHARDS = "GATEWAY_QUEUE_SHARDS";
     public static final String GATEWAY_ALLOCATOR_SHARDS = "GATEWAY_ALLOCATOR_SHARDS";
+    public static final String GATEWAY_SLAB_SIZE_BYTES = "GATEWAY_SLAB_SIZE_BYTES";
     public static final String GATEWAY_QUEUE_WORKERS = "GATEWAY_QUEUE_WORKERS";
 
     public static final String GATEWAY_MAX_INFLIGHT = "GATEWAY_MAX_INFLIGHT";

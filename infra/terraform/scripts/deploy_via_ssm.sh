@@ -23,6 +23,7 @@ TELEMETRYGEN_IMAGE="ghcr.io/open-telemetry/opentelemetry-collector-contrib/telem
 MAX_INFLIGHT="8192"
 EXPORTER_POOL_SIZE="64"
 EXPORTER_IO_THREADS="0"
+SLAB_SIZE_BYTES="268435456"
 SSM_TIMEOUT="7200"
 
 usage() {
@@ -48,6 +49,7 @@ Options:
   --max-inflight <n>            Max inflight packets (default: 8192)
   --exporter-pool-size <n>      HTTP exporter connection pool size (default: 64)
   --exporter-io-threads <n>     HTTP exporter IO threads (0 = auto) (default: 0)
+  --slab-size-bytes <n>          Slab allocator size in bytes (default: 268435456)
   --ssm-timeout <seconds>       SSM execution timeout in seconds (default: 7200)
   -h, --help                    Show this help
 USAGE
@@ -139,6 +141,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --exporter-io-threads)
       EXPORTER_IO_THREADS="$2"
+      shift 2
+      ;;
+    --slab-size-bytes)
+      SLAB_SIZE_BYTES="$2"
       shift 2
       ;;
     --ssm-timeout)
@@ -342,6 +348,7 @@ MASKING_RULES='${MASKING_RULES}'
 MAX_INFLIGHT='${MAX_INFLIGHT}'
 EXPORTER_POOL_SIZE='${EXPORTER_POOL_SIZE}'
 EXPORTER_IO_THREADS='${EXPORTER_IO_THREADS}'
+SLAB_SIZE_BYTES='${SLAB_SIZE_BYTES}'
 
 if [[ -n "\${GATEWAY_IMAGE_INPUT}" ]]; then
   docker pull "\${GATEWAY_IMAGE_INPUT}" || true
@@ -392,6 +399,7 @@ docker run -d --name finops-gateway --restart unless-stopped \
   -e GATEWAY_MAX_INFLIGHT="\${MAX_INFLIGHT}" \
   -e GATEWAY_EXPORTER_POOL_SIZE="\${EXPORTER_POOL_SIZE}" \
   -e GATEWAY_EXPORTER_IO_THREADS="\${EXPORTER_IO_THREADS}" \
+  -e GATEWAY_SLAB_SIZE_BYTES="\${SLAB_SIZE_BYTES}" \
   -e GATEWAY_METRICS_ENABLED=true \
   -e GATEWAY_METRICS_HTTP_ENABLED=true \
   -e GATEWAY_METRICS_HTTP_PORT=9464 \
