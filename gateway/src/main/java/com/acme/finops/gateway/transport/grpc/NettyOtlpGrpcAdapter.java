@@ -1,5 +1,6 @@
 package com.acme.finops.gateway.transport.grpc;
 
+import com.acme.finops.gateway.memory.AllocationDeniedException;
 import com.acme.finops.gateway.memory.AllocationTag;
 import com.acme.finops.gateway.memory.LeaseResult;
 import com.acme.finops.gateway.memory.PacketAllocator;
@@ -361,6 +362,9 @@ public final class NettyOtlpGrpcAdapter implements OtlpGrpcAdapter {
                     ack.responsePayload().release();
                 }
                 return new GrpcOutcome(0, "");
+            } catch (AllocationDeniedException ade) {
+                metrics.incParseErrors(1L, ade.reasonCode());
+                return new GrpcOutcome(14, "slab_allocation_denied");
             } catch (Throwable t) {
                 LOG.log(Level.WARNING, "ingress dispatch failed", t);
                 metrics.incParseErrors(1L, 13);
@@ -429,8 +433,7 @@ public final class NettyOtlpGrpcAdapter implements OtlpGrpcAdapter {
 
         PacketRef ref = switch (lease) {
             case LeaseResult.Granted granted -> granted.packetRef();
-            case LeaseResult.Denied denied -> throw new IllegalStateException(
-                "Packet allocation denied, reasonCode=" + denied.reasonCode());
+            case LeaseResult.Denied denied -> throw new AllocationDeniedException(denied.reasonCode());
         };
 
         try {

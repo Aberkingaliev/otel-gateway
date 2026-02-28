@@ -1,5 +1,6 @@
 package com.acme.finops.gateway.transport.http;
 
+import com.acme.finops.gateway.memory.AllocationDeniedException;
 import com.acme.finops.gateway.memory.AllocationTag;
 import com.acme.finops.gateway.memory.LeaseResult;
 import com.acme.finops.gateway.memory.PacketAllocator;
@@ -259,6 +260,10 @@ public final class NettyOtlpHttpAdapter implements OtlpHttpProtobufAdapter {
                 } else {
                     writeResponse(ctx, req, HttpResponseStatus.OK, Unpooled.EMPTY_BUFFER, OtlpContentTypes.normalizeResponseContentType(contentType));
                 }
+            } catch (AllocationDeniedException ade) {
+                metrics.incParseErrors(1L, ade.reasonCode());
+                writeResponse(ctx, req, HttpResponseStatus.SERVICE_UNAVAILABLE,
+                    "slab allocation denied", "text/plain");
             } catch (Throwable t) {
                 LOG.log(Level.WARNING, "HTTP ingest failure", t);
                 metrics.incParseErrors(1L, GatewayStatusCodes.INTERNAL_ERROR);
@@ -297,8 +302,7 @@ public final class NettyOtlpHttpAdapter implements OtlpHttpProtobufAdapter {
 
         PacketRef ref = switch (lease) {
             case LeaseResult.Granted granted -> granted.packetRef();
-            case LeaseResult.Denied denied -> throw new IllegalStateException(
-                "Packet allocation denied, reasonCode=" + denied.reasonCode());
+            case LeaseResult.Denied denied -> throw new AllocationDeniedException(denied.reasonCode());
         };
 
         try {
@@ -390,4 +394,5 @@ public final class NettyOtlpHttpAdapter implements OtlpHttpProtobufAdapter {
             ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
         }
     }
+
 }
