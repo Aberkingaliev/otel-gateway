@@ -1,0 +1,13 @@
+package com.acme.finops.gateway.wire.errors;
+
+public enum WireErrorCode {
+    TRUNCATED_FRAME,
+    VARINT_UNTERMINATED,
+    VARINT_OVERFLOW,
+    FRAME_NESTING_LIMIT,
+    FRAME_STACK_UNDERFLOW,
+    UNSUPPORTED_WIRE_TYPE,
+    SCHEMA_MISMATCH,
+    MUTATION_INVALID,
+    REFRAME_CAPACITY_EXCEEDED
+}

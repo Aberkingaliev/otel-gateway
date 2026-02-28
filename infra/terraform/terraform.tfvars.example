@@ -1,0 +1,41 @@
+# Copy to terraform.tfvars and adjust for your AWS account.
+
+project_name = "finops-gateway"
+environment  = "benchmark-v2"
+region       = "us-east-1"
+
+# Optional: pin to a single AZ for reproducibility (recommended)
+availability_zone = "us-east-1a"
+
+# Allow your current public IP/CIDR for SSH and metrics access
+# Find your IP: curl -s ifconfig.me
+operator_ingress_cidrs = ["203.0.113.10/32"]
+
+# SSH not required — all orchestration via SSM
+key_name = null
+
+# c7i track defaults (x86) — overridden by profile_*.tfvars
+instance_architecture      = "x86_64"
+telemetrygen_instance_type = "c7i.2xlarge"
+gateway_instance_type      = "c7i.2xlarge"
+upstream_instance_type     = "c7i.xlarge"
+
+associate_public_ip = true
+
+# false = basic monitoring (free), true = detailed 1-min ($2.10/instance/month)
+enable_detailed_monitoring = false
+
+# 30GB is enough for benchmark (Docker images + logs + artifacts)
+root_volume_size_gb   = 30
+root_volume_type      = "gp3"
+root_volume_iops      = 3000
+root_volume_throughput = 125
+
+cloudwatch_log_retention_days = 3
+
+extra_tags = {
+  Owner   = "finops-team"
+  Purpose = "aws-benchmark-v2"
+}
+
+user_data_extra = ""

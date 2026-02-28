@@ -1,0 +1,121 @@
+plugins {
+    id 'java'
+    id 'jacoco'
+}
+
+group = 'com.acme.finops'
+version = '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'io.netty:netty-buffer:4.1.115.Final'
+    implementation 'io.netty:netty-codec:4.1.115.Final'
+    implementation 'io.netty:netty-codec-http:4.1.115.Final'
+    implementation 'io.netty:netty-codec-http2:4.1.115.Final'
+    implementation 'io.netty:netty-transport:4.1.115.Final'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
+
+    testImplementation platform('org.junit:junit-bom:6.0.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += ['--add-modules', 'jdk.incubator.vector,jdk.httpserver']
+}
+
+test {
+    jvmArgs '--add-modules', 'jdk.incubator.vector,jdk.httpserver'
+    useJUnitPlatform()
+}
+
+def prrCoverageClassDirs = fileTree("${buildDir}/classes/java/main").matching {
+    include 'com/acme/finops/gateway/transport/**'
+    include 'com/acme/finops/gateway/wire/mutate/**'
+    include 'com/acme/finops/gateway/wire/cursor/**'
+    include 'com/acme/finops/gateway/memory/**'
+    include 'com/acme/finops/gateway/policy/**'
+    include 'com/acme/finops/gateway/util/**'
+    include 'com/acme/finops/gateway/backpressure/**'
+    include 'com/acme/finops/gateway/queue/**'
+
+    exclude 'com/acme/finops/gateway/ci/**'
+    exclude '**/*Main*'
+}
+
+jacocoTestReport {
+    dependsOn test
+    classDirectories.setFrom(prrCoverageClassDirs)
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+jacocoTestCoverageVerification {
+    dependsOn test
+    classDirectories.setFrom(prrCoverageClassDirs)
+    violationRules {
+        rule {
+            limit {
+                counter = 'BRANCH'
+                value = 'COVEREDRATIO'
+                minimum = 0.80
+            }
+        }
+    }
+}
+
+check.dependsOn jacocoTestCoverageVerification
+
+tasks.withType(JavaExec).configureEach {
+    jvmArgs '--add-modules', 'jdk.incubator.vector,jdk.httpserver'
+}
+
+tasks.register('runNettyGrpc4317', JavaExec) {
+    group = 'application'
+    description = 'Run Netty OTLP gRPC adapter on port 4317'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.acme.finops.gateway.transport.grpc.NettyGrpc4317Main'
+}
+
+tasks.register('runNettyGrpc4317Client', JavaExec) {
+    group = 'application'
+    description = 'Run Netty gRPC/HTTP2 client against port 4317'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.acme.finops.gateway.transport.grpc.NettyGrpc4317ClientMain'
+}
+
+tasks.register('runGatewayProxy', JavaExec) {
+    group = 'application'
+    description = 'Run gateway in async proxy mode (4317 gRPC + 4318 HTTP)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.acme.finops.gateway.transport.proxy.NettyGatewayProxyMain'
+}
+
+tasks.register('runCompatCheck', JavaExec) {
+    group = 'verification'
+    description = 'Run offline compatibility check against ci-input/compat-input.json'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.acme.finops.gateway.ci.CompatCheckMain'
+    args "${projectDir}/ci-input/compat-input.json"
+}
+
+tasks.register('runConformanceHarness', JavaExec) {
+    group = 'verification'
+    description = 'Run offline conformance harness against ci-input/conformance-plan.json'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.acme.finops.gateway.ci.ConformanceHarnessMain'
+    args "${projectDir}/ci-input/conformance-plan.json"
+}
+
+tasks.register('runPerfRegressionCheck', JavaExec) {
+    group = 'verification'
+    description = 'Run perf regression check and produce report under build/reports/perf'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.acme.finops.gateway.ci.PerfRegressionCheckMain'
+    args "${projectDir}/ci-input/perf-regression-input.json"
+}

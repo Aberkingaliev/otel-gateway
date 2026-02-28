@@ -1,0 +1,27 @@
+{
+  "baseline": {
+    "scenario": "default",
+    "throughputOpsSec": 10000.0,
+    "p50Nanos": 50000,
+    "p95Nanos": 90000,
+    "p99Nanos": 120000,
+    "allocBytesPerOp": 96,
+    "gcTimePercent": 1.5
+  },
+  "current": {
+    "scenario": "default",
+    "throughputOpsSec": 10500.0,
+    "p50Nanos": 52000,
+    "p95Nanos": 95000,
+    "p99Nanos": 130000,
+    "allocBytesPerOp": 100,
+    "gcTimePercent": 1.7
+  },
+  "budget": {
+    "scenario": "default",
+    "minThroughputOpsSec": 8000.0,
+    "maxP99Nanos": 200000,
+    "maxAllocBytesPerOp": 256,
+    "maxGcTimePercent": 5.0
+  }
+}

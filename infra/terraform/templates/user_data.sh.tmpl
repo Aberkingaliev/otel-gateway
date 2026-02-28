@@ -1,0 +1,102 @@
+#!/bin/bash
+set -euxo pipefail
+
+exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+
+# Base packages for benchmark nodes
+if command -v dnf >/dev/null 2>&1; then
+  dnf update -y
+  dnf install -y docker git jq tar unzip amazon-cloudwatch-agent
+else
+  yum update -y
+  yum install -y docker git jq tar unzip amazon-cloudwatch-agent
+fi
+
+systemctl enable docker
+systemctl start docker
+usermod -aG docker ec2-user || true
+
+# CloudWatch Agent config (host-level observability for soak analysis)
+mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
+cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<CWJSON
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "root",
+    "region": "${region}"
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/user-data.log",
+            "log_group_name": "${log_group_name}",
+            "log_stream_name": "{instance_id}/user-data",
+            "retention_in_days": 14
+          },
+          {
+            "file_path": "/var/log/cloud-init-output.log",
+            "log_group_name": "${log_group_name}",
+            "log_stream_name": "{instance_id}/cloud-init"
+          },
+          {
+            "file_path": "/var/log/messages",
+            "log_group_name": "${log_group_name}",
+            "log_stream_name": "{instance_id}/messages"
+          }
+        ]
+      }
+    }
+  },
+  "metrics": {
+    "append_dimensions": {
+      "InstanceId": "$${aws:InstanceId}",
+      "InstanceType": "$${aws:InstanceType}",
+      "AutoScalingGroupName": "$${aws:AutoScalingGroupName}"
+    },
+    "aggregation_dimensions": [["InstanceId"]],
+    "metrics_collected": {
+      "cpu": {
+        "measurement": ["cpu_usage_idle", "cpu_usage_iowait", "cpu_usage_user", "cpu_usage_system"],
+        "metrics_collection_interval": 60,
+        "resources": ["*"]
+      },
+      "mem": {
+        "measurement": ["mem_used_percent"],
+        "metrics_collection_interval": 60
+      },
+      "disk": {
+        "measurement": ["used_percent", "inodes_free"],
+        "metrics_collection_interval": 60,
+        "resources": ["*"]
+      },
+      "diskio": {
+        "measurement": ["read_bytes", "write_bytes", "io_time"],
+        "metrics_collection_interval": 60,
+        "resources": ["*"]
+      },
+      "net": {
+        "measurement": ["bytes_sent", "bytes_recv", "packets_sent", "packets_recv"],
+        "metrics_collection_interval": 60,
+        "resources": ["*"]
+      }
+    }
+  }
+}
+CWJSON
+
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config \
+  -m ec2 \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json \
+  -s
+
+mkdir -p /opt/finops
+cat >/opt/finops/benchmark-meta.txt <<META
+node_set=${node_set_name}
+region=${region}
+created_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+META
+
+${user_data_extra}

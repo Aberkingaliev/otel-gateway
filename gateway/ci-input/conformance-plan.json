@@ -1,0 +1,7 @@
+{
+  "profileId": "otel-java-sdk",
+  "corpusSize": 100,
+  "passedCases": 100,
+  "failedCases": 0,
+  "requiredPassRate": 0.99
+}

@@ -1,0 +1,12 @@
+mask-trace-res-tenant|TRACES|REDACT_MASK|resource.attributes.tenant_id|[REDACTED]|1|skip|true
+mask-trace-span-tenant|TRACES|REDACT_MASK|scopeSpans[*].spans[*].attributes.tenant_id|[REDACTED]|2|skip|true
+mask-trace-span-userid|TRACES|REDACT_MASK|scopeSpans[*].spans[*].attributes.user.id|[REDACTED]|3|skip|true
+mask-trace-span-email|TRACES|REDACT_MASK|scopeSpans[*].spans[*].attributes.user.email|[REDACTED]|4|skip|true
+mask-trace-span-ip|TRACES|REDACT_MASK|scopeSpans[*].spans[*].attributes.net.peer.ip|[REDACTED]|5|skip|true
+mask-trace-span-token|TRACES|REDACT_MASK|scopeSpans[*].spans[*].attributes.auth.token|[REDACTED]|6|skip|true
+mask-metrics-res-tenant|METRICS|REDACT_MASK|resource.attributes.tenant_id|[REDACTED]|1|skip|true
+mask-metrics-dp-tenant|METRICS|REDACT_MASK|resourcemetrics.resource.attributes.tenant_id|[REDACTED]|2|skip|true
+mask-logs-res-tenant|LOGS|REDACT_MASK|resource.attributes.tenant_id|[REDACTED]|1|skip|true
+mask-logs-userid|LOGS|REDACT_MASK|resourcelogs.resource.attributes.user.id|[REDACTED]|2|skip|true
+mask-logs-email|LOGS|REDACT_MASK|resourcelogs.resource.attributes.user.email|[REDACTED]|3|skip|true
+mask-logs-ip|LOGS|REDACT_MASK|resourcelogs.resource.attributes.net.peer.ip|[REDACTED]|4|skip|true

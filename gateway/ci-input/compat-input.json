@@ -1,0 +1,13 @@
+{
+  "requestId": 1,
+  "sourceSchema": {
+    "namespace": "otlp",
+    "name": "traces",
+    "version": "v1"
+  },
+  "targetSchema": {
+    "namespace": "otlp",
+    "name": "traces",
+    "version": "v1"
+  }
+}

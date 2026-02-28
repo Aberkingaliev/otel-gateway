@@ -1,0 +1,17 @@
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Env / secrets
+infra/.env
+infra/terraform/terraform.tfvars
+
+# Artifacts
+infra/artifacts/
+
+# Claude
+.claude/

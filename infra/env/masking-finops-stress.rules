@@ -1,0 +1,4 @@
+mask-trace-tenant|TRACES|REDACT_MASK|resource.attributes.tenant_id|##########|10|skip|true
+mask-trace-span-tenant|TRACES|REDACT_MASK|scopeSpans[*].spans[*].attributes.tenant_id|##########|11|skip|true
+mask-metrics-tenant|METRICS|REDACT_MASK|resourcemetrics.resource.attributes.tenant_id|##########|10|skip|true
+drop-all-logs|LOGS|DROP|resourcelogs.resource.attributes.tenant_id||1|skip|true
