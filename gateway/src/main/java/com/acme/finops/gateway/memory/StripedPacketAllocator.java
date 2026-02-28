@@ -8,8 +8,8 @@ import java.util.logging.Logger;
  * the calling thread's ID, giving lock-free, deterministic thread affinity.
  *
  * <p>Each shard owns {@code totalCapacityBytes / shardCount} bytes of off-heap
- * memory. There is no cross-shard fallback: if the selected shard is full the
- * allocation is denied immediately, providing clear backpressure.
+ * memory. If the preferred shard is full, the allocator tries all remaining
+ * shards before denying the allocation.
  */
 public final class StripedPacketAllocator implements PacketAllocator {
     private static final Logger LOG = Logger.getLogger(StripedPacketAllocator.class.getName());
@@ -39,8 +39,22 @@ public final class StripedPacketAllocator implements PacketAllocator {
 
     @Override
     public LeaseResult allocate(int minBytes, AllocationTag tag) {
-        int shard = (int) (Thread.currentThread().threadId() & mask);
-        return shards[shard].allocate(minBytes, tag);
+        int preferred = (int) (Thread.currentThread().threadId() & mask);
+        LeaseResult result = shards[preferred].allocate(minBytes, tag);
+        if (result instanceof LeaseResult.Granted) {
+            return result;
+        }
+
+        // Cross-shard fallback: try all other shards
+        for (int i = 1; i <= mask; i++) {
+            int shard = (preferred + i) & mask;
+            result = shards[shard].allocate(minBytes, tag);
+            if (result instanceof LeaseResult.Granted) {
+                return result;
+            }
+        }
+
+        return result; // last Denied
     }
 
     @Override

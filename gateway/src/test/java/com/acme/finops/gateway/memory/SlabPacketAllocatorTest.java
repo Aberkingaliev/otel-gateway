@@ -18,26 +18,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SlabPacketAllocatorTest {
 
     @Test
-    void shouldReuseFreedGapWhenCursorReachedCapacity() {
+    void shouldEpochResetAfterAllReleasedAndReallocate() {
         try (SlabPacketAllocator allocator = new SlabPacketAllocator(96)) {
 
             PacketRef a = granted(allocator.allocate(32, tag()));
             PacketRef b = granted(allocator.allocate(32, tag()));
             PacketRef c = granted(allocator.allocate(32, tag()));
 
-            a.release(); // creates a gap at the beginning while other allocations are still active
+            // Slab is full
+            assertInstanceOf(LeaseResult.Denied.class, allocator.allocate(8, tag()));
 
-            PacketRef reused = granted(allocator.allocate(32, tag()));
-            assertEquals(32, reused.length());
-
-            reused.release();
+            // Release all — epoch reset, cursor back to 0
+            a.release();
             b.release();
             c.release();
+
+            assertEquals(0L, allocator.stats().inUseBytes());
+
+            // Can allocate again from the beginning
+            PacketRef reused = granted(allocator.allocate(32, tag()));
+            assertEquals(32, reused.length());
+            reused.release();
         }
     }
 
     @Test
-    void shouldCoalesceAdjacentFreedBlocks() {
+    void shouldNotReclaimUntilAllReleased() {
         try (SlabPacketAllocator allocator = new SlabPacketAllocator(128)) {
 
             PacketRef a = granted(allocator.allocate(32, tag()));
@@ -45,15 +51,21 @@ class SlabPacketAllocatorTest {
             PacketRef c = granted(allocator.allocate(32, tag()));
             PacketRef d = granted(allocator.allocate(32, tag()));
 
+            // Release b and c — but a and d still active, no epoch reset
             b.release();
-            c.release(); // adjacent blocks must coalesce into 64 bytes
+            c.release();
 
-            PacketRef merged = granted(allocator.allocate(64, tag()));
-            assertEquals(64, merged.length());
+            // Cursor stays at 128, no reclaim yet
+            assertEquals(128L, allocator.stats().inUseBytes());
 
-            merged.release();
+            // Cannot allocate — slab full, no free-list in bump-pointer
+            assertInstanceOf(LeaseResult.Denied.class, allocator.allocate(8, tag()));
+
             a.release();
             d.release();
+
+            // Now all released — epoch reset
+            assertEquals(0L, allocator.stats().inUseBytes());
         }
     }
 
@@ -95,27 +107,28 @@ class SlabPacketAllocatorTest {
     }
 
     @Test
-    void shouldTripleCoalesceWhenMiddleBlockFreedLast() {
+    void shouldEpochResetAfterOutOfOrderRelease() {
         try (SlabPacketAllocator allocator = new SlabPacketAllocator(256)) {
 
             PacketRef a = granted(allocator.allocate(32, tag()));
             PacketRef b = granted(allocator.allocate(32, tag()));
             PacketRef c = granted(allocator.allocate(32, tag()));
 
-            a.release(); // free left
-            c.release(); // free right
-            b.release(); // free middle — should coalesce all 3 into one 96-byte block
+            a.release();
+            c.release();
+            b.release(); // last one triggers epoch reset
 
-            // All 3 blocks (3 x 32 = 96 bytes) should have merged into one contiguous free block
-            PacketRef merged = granted(allocator.allocate(96, tag()));
-            assertEquals(96, merged.length());
+            assertEquals(0L, allocator.stats().inUseBytes());
 
-            merged.release();
+            // Full slab available again
+            PacketRef big = granted(allocator.allocate(256, tag()));
+            assertEquals(256, big.length());
+            big.release();
         }
     }
 
     @Test
-    void shouldPartiallyTrimCursorFromTail() {
+    void shouldCursorNotShrinkOnPartialRelease() {
         try (SlabPacketAllocator allocator = new SlabPacketAllocator(256)) {
 
             PacketRef a = granted(allocator.allocate(32, tag()));
@@ -123,21 +136,16 @@ class SlabPacketAllocatorTest {
             PacketRef c = granted(allocator.allocate(32, tag()));
 
             // cursor is at 96 (3 x 32)
-            AllocatorStats beforeFree = allocator.stats();
-            assertEquals(96L, beforeFree.inUseBytes());
+            assertEquals(96L, allocator.stats().inUseBytes());
 
-            c.release(); // tail block freed — cursor should shrink from 96 to 64
+            c.release(); // partial release — cursor stays at 96 (bump-pointer, no trim)
+            assertEquals(96L, allocator.stats().inUseBytes());
 
-            AllocatorStats afterCFree = allocator.stats();
-            assertEquals(64L, afterCFree.inUseBytes());
+            a.release(); // still partial
+            assertEquals(96L, allocator.stats().inUseBytes());
 
-            a.release(); // gap at start — cursor should NOT shrink (B still blocks it)
-
-            AllocatorStats afterAFree = allocator.stats();
-            // Cursor stays at 64 because B (offset 32..64) is still active
-            assertEquals(64L, afterAFree.inUseBytes());
-
-            b.release(); // last block freed — full rewind
+            b.release(); // last — epoch reset
+            assertEquals(0L, allocator.stats().inUseBytes());
         }
     }
 
@@ -159,30 +167,6 @@ class SlabPacketAllocatorTest {
 
             first.release();
             second.release();
-        }
-    }
-
-    @Test
-    void shouldExactFitFromFreeList() {
-        try (SlabPacketAllocator allocator = new SlabPacketAllocator(256)) {
-
-            PacketRef a = granted(allocator.allocate(32, tag()));
-            PacketRef b = granted(allocator.allocate(32, tag()));
-
-            a.release(); // creates a 32-byte free block at offset 0
-
-            // Allocate exactly 32 bytes — should reuse A's slot (best-fit exact match)
-            PacketRef reused = granted(allocator.allocate(32, tag()));
-            assertEquals(32, reused.length());
-
-            AllocatorStats stats = allocator.stats();
-            // cursor should still be at 64 (A's slot was reused from the free list, not the cursor)
-            assertEquals(64L, stats.inUseBytes());
-            assertEquals(3L, stats.allocCount());
-            assertEquals(1L, stats.releaseCount());
-
-            reused.release();
-            b.release();
         }
     }
 
@@ -258,8 +242,6 @@ class SlabPacketAllocatorTest {
             AllocatorStats stats = allocator.stats();
             assertEquals(stats.allocCount(), stats.releaseCount(),
                 "alloc and release counts must match");
-            // activeAllocations is not directly exposed via stats, but inUseBytes == 0 confirms
-            // all allocations were released (cursor rewind happens when activeAllocations reaches 0)
             assertEquals(0L, stats.inUseBytes(), "all allocations should have been released");
         }
     }

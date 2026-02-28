@@ -4,7 +4,7 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Queue-depth based throttling strategy with simple hysteresis.
+ * Queue-depth based throttling strategy with CAS-safe hysteresis.
  */
 public final class WatermarkThrottleStrategy implements ThrottleStrategy {
     private final double shedLightRatio;
@@ -27,23 +27,31 @@ public final class WatermarkThrottleStrategy implements ThrottleStrategy {
         int high = Math.max(low, watermarks.high());
         int critical = Math.max(high, watermarks.critical());
 
-        ThrottleMode next;
+        ThrottleMode depthMode;
         if (depth >= critical) {
-            next = ThrottleMode.PAUSE_INGRESS;
+            depthMode = ThrottleMode.PAUSE_INGRESS;
         } else if (depth >= high) {
-            next = ThrottleMode.SHED_AGGRESSIVE;
+            depthMode = ThrottleMode.SHED_AGGRESSIVE;
         } else if (depth >= low) {
-            next = ThrottleMode.SHED_LIGHT;
+            depthMode = ThrottleMode.SHED_LIGHT;
         } else {
-            next = ThrottleMode.PASS;
+            depthMode = ThrottleMode.PASS;
         }
 
-        // Hysteresis: once we entered shed/pause, keep mode until we're below low watermark.
-        ThrottleMode prev = previousMode.get();
-        if (prev != ThrottleMode.PASS && depth >= low && next == ThrottleMode.PASS) {
-            next = prev;
+        // CAS-safe hysteresis: once in shed/pause, keep mode until depth < low.
+        ThrottleMode next;
+        while (true) {
+            ThrottleMode prev = previousMode.get();
+            if (prev != ThrottleMode.PASS && depth >= low && depthMode == ThrottleMode.PASS) {
+                next = prev;
+            } else {
+                next = depthMode;
+            }
+            if (previousMode.compareAndSet(prev, next)) {
+                break;
+            }
+            // CAS failed — another thread updated; re-read and retry
         }
-        previousMode.set(next);
 
         return switch (next) {
             case PASS -> new ThrottleDecision(ThrottleMode.PASS, 0.0d, 0L, "depth_below_low");

@@ -5,18 +5,21 @@ import com.acme.finops.gateway.util.GatewayStatusCodes;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.util.Comparator;
-import java.util.Map;
-import java.util.TreeMap;
-import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Logger;
 
 /**
- * MVP slab allocator: one shared slab + bump pointer.
- * Release strategy is intentionally simplified for bootstrap.
+ * Lock-free bump-pointer slab allocator.
+ *
+ * <p>Allocation is a single CAS on an atomic cursor — O(1), zero contention.
+ * Release decrements an active-allocation counter; when it reaches zero the
+ * cursor rewinds to 0 (epoch reset), reclaiming the entire slab instantly.
+ *
+ * <p>There is no per-block free-list: individual releases do NOT return memory
+ * to the slab until the epoch resets. This is optimal for short-lived packets
+ * that flow through a pipeline (allocate → process → export → release) because
+ * under steady throughput the epoch resets frequently.
  */
 public final class SlabPacketAllocator implements PacketAllocator {
     private static final Logger LOG = Logger.getLogger(SlabPacketAllocator.class.getName());
@@ -26,12 +29,7 @@ public final class SlabPacketAllocator implements PacketAllocator {
     private final long capacity;
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
-    private final ReentrantLock lock = new ReentrantLock();
-    private final TreeMap<Long, FreeBlock> freeByStart = new TreeMap<>();
-    private final TreeSet<FreeBlock> freeBySize = new TreeSet<>(
-        Comparator.comparingLong(FreeBlock::size).thenComparingLong(FreeBlock::start)
-    );
-    private long cursor = 0;
+    private final AtomicLong cursor = new AtomicLong(0);
     private final AtomicLong seq = new AtomicLong(1);
 
     private final AtomicLong allocCount = new AtomicLong();
@@ -55,63 +53,51 @@ public final class SlabPacketAllocator implements PacketAllocator {
         }
 
         final long size = align8(minBytes);
-        activeAllocations.incrementAndGet();
-        lock.lock();
-        try {
-            if (closed.get()) {
-                activeAllocations.decrementAndGet();
-                failedAllocations.incrementAndGet();
-                return new LeaseResult.Denied(GatewayStatusCodes.SERVICE_UNAVAILABLE);
-            }
-            Reservation reservation = reserve(size);
-            if (reservation == null) {
-                activeAllocations.decrementAndGet();
+
+        // CAS bump — lock-free
+        long start;
+        long end;
+        while (true) {
+            start = cursor.get();
+            end = start + size;
+            if (end < start || end > capacity) {
                 failedAllocations.incrementAndGet();
                 return new LeaseResult.Denied(GatewayStatusCodes.INSUFFICIENT_STORAGE);
             }
-
-            try {
-                MemorySegment slice = slab.asSlice(reservation.start(), size);
-                long packetId = seq.getAndIncrement();
-
-                PacketDescriptor descriptor = new PacketDescriptor(
-                    packetId,
-                    0L,
-                    signalKindFromCode(tag == null ? 0 : tag.signalTypeCode()),
-                    null,
-                    0,
-                    minBytes,
-                    System.nanoTime()
-                );
-
-                PacketRefImpl ref = new PacketRefImpl(packetId, descriptor, slice, 0, minBytes);
-                PacketRef tracked = new TrackedPacketRef(ref, reservation.end(), reservation.start());
-
-                allocCount.incrementAndGet();
-                return new LeaseResult.Granted(tracked);
-            } catch (RuntimeException e) {
-                rollbackReservation(reservation);
-                activeAllocations.decrementAndGet();
-                throw e;
+            if (cursor.compareAndSet(start, end)) {
+                break;
             }
-        } finally {
-            lock.unlock();
+            // CAS failed — another thread bumped; retry
         }
+
+        activeAllocations.incrementAndGet();
+
+        MemorySegment slice = slab.asSlice(start, size);
+        long packetId = seq.getAndIncrement();
+
+        PacketDescriptor descriptor = new PacketDescriptor(
+            packetId,
+            0L,
+            signalKindFromCode(tag == null ? 0 : tag.signalTypeCode()),
+            null,
+            0,
+            minBytes,
+            System.nanoTime()
+        );
+
+        PacketRefImpl ref = new PacketRefImpl(packetId, descriptor, slice, 0, minBytes);
+        PacketRef tracked = new TrackedPacketRef(ref);
+
+        allocCount.incrementAndGet();
+        return new LeaseResult.Granted(tracked);
     }
 
     @Override
     public AllocatorStats stats() {
-        long usedBytes;
-        lock.lock();
-        try {
-            usedBytes = cursor;
-        } finally {
-            lock.unlock();
-        }
         return new AllocatorStats(
             allocCount.get(),
             releaseCount.get(),
-            usedBytes,
+            cursor.get(),
             failedAllocations.get()
         );
     }
@@ -122,13 +108,9 @@ public final class SlabPacketAllocator implements PacketAllocator {
 
     private final class TrackedPacketRef implements PacketRef {
         private final PacketRefImpl delegate;
-        private final long end;
-        private final long start;
 
-        private TrackedPacketRef(PacketRefImpl delegate, long end, long start) {
+        private TrackedPacketRef(PacketRefImpl delegate) {
             this.delegate = delegate;
-            this.end = end;
-            this.start = start;
         }
 
         @Override
@@ -178,19 +160,9 @@ public final class SlabPacketAllocator implements PacketAllocator {
             if (done) {
                 releaseCount.incrementAndGet();
                 long active = activeAllocations.decrementAndGet();
-                lock.lock();
-                try {
-                    if (active == 0) {
-                        // No live packets remain: full rewind eliminates fragmentation from out-of-order releases.
-                        freeByStart.clear();
-                        freeBySize.clear();
-                        cursor = 0;
-                    } else {
-                        addFreeBlock(new FreeBlock(start, end - start));
-                        trimCursorFromTail();
-                    }
-                } finally {
-                    lock.unlock();
+                if (active == 0) {
+                    // Epoch reset: all packets released, reclaim entire slab.
+                    cursor.set(0);
                 }
             }
             return done;
@@ -199,97 +171,6 @@ public final class SlabPacketAllocator implements PacketAllocator {
         @Override
         public void close() {
             release();
-        }
-    }
-
-    private Reservation reserve(long size) {
-        FreeBlock fromFree = findBestFit(size);
-        if (fromFree != null) {
-            removeFreeBlock(fromFree);
-            long remainder = fromFree.size() - size;
-            long start = fromFree.start();
-            long end = start + size;
-            if (remainder > 0) {
-                addFreeBlock(new FreeBlock(end, remainder));
-            }
-            return new Reservation(start, end, false);
-        }
-
-        long start = cursor;
-        long end = start + size;
-        if (end < start || end > capacity) {
-            return null;
-        }
-        cursor = end;
-        return new Reservation(start, end, true);
-    }
-
-    private void rollbackReservation(Reservation reservation) {
-        if (reservation.fromCursor()) {
-            cursor = reservation.start();
-            return;
-        }
-        addFreeBlock(new FreeBlock(reservation.start(), reservation.end() - reservation.start()));
-    }
-
-    private FreeBlock findBestFit(long size) {
-        return freeBySize.ceiling(new FreeBlock(Long.MIN_VALUE, size));
-    }
-
-    private void addFreeBlock(FreeBlock block) {
-        if (block.size() <= 0) {
-            return;
-        }
-
-        long mergedStart = block.start();
-        long mergedEnd = block.end();
-
-        Map.Entry<Long, FreeBlock> left = freeByStart.floorEntry(mergedStart);
-        if (left != null && left.getValue().end() == mergedStart) {
-            FreeBlock prev = left.getValue();
-            removeFreeBlock(prev);
-            mergedStart = prev.start();
-        }
-
-        while (true) {
-            FreeBlock right = freeByStart.get(mergedEnd);
-            if (right == null) {
-                break;
-            }
-            removeFreeBlock(right);
-            mergedEnd = right.end();
-        }
-
-        FreeBlock merged = new FreeBlock(mergedStart, mergedEnd - mergedStart);
-        freeByStart.put(merged.start(), merged);
-        freeBySize.add(merged);
-    }
-
-    private void removeFreeBlock(FreeBlock block) {
-        freeByStart.remove(block.start());
-        freeBySize.remove(block);
-    }
-
-    private void trimCursorFromTail() {
-        while (cursor > 0) {
-            Map.Entry<Long, FreeBlock> candidate = freeByStart.floorEntry(cursor - 1);
-            if (candidate == null) {
-                return;
-            }
-            FreeBlock tail = candidate.getValue();
-            if (tail.end() != cursor) {
-                return;
-            }
-            removeFreeBlock(tail);
-            cursor = tail.start();
-        }
-    }
-
-    private record Reservation(long start, long end, boolean fromCursor) {}
-
-    private record FreeBlock(long start, long size) {
-        private long end() {
-            return start + size;
         }
     }
 
@@ -304,22 +185,15 @@ public final class SlabPacketAllocator implements PacketAllocator {
 
     @Override
     public void close() {
-        lock.lock();
-        try {
-            if (!closed.compareAndSet(false, true)) {
-                return;
-            }
-            long active = activeAllocations.get();
-            if (active > 0) {
-                LOG.warning("Closing SlabPacketAllocator with " + active
-                    + " active allocations still in flight — potential use-after-free risk");
-            }
-            freeByStart.clear();
-            freeBySize.clear();
-            cursor = 0;
-            arena.close();
-        } finally {
-            lock.unlock();
+        if (!closed.compareAndSet(false, true)) {
+            return;
         }
+        long active = activeAllocations.get();
+        if (active > 0) {
+            LOG.warning("Closing SlabPacketAllocator with " + active
+                + " active allocations still in flight — potential use-after-free risk");
+        }
+        cursor.set(0);
+        arena.close();
     }
 }

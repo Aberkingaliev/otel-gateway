@@ -101,19 +101,24 @@ class StripedPacketAllocatorTest {
     }
 
     @Test
-    void shouldDenyWhenShardFull() {
-        // 4 shards of 64 bytes each = 256 total; each shard has only 64 bytes
-        try (StripedPacketAllocator allocator = new StripedPacketAllocator(256, 4)) {
-            // Current thread maps to one shard (64 bytes). Fill it up.
-            PacketRef a = granted(allocator.allocate(32, tag()));
-            PacketRef b = granted(allocator.allocate(32, tag()));
-
-            // Shard is now full — should get Denied
+    void shouldDenyWhenAllShardsFull() {
+        // 4 shards of 32 bytes each = 128 total
+        try (StripedPacketAllocator allocator = new StripedPacketAllocator(128, 4)) {
+            // Fill ALL shards (4 x 32 bytes). Cross-shard fallback means
+            // we need to exhaust every shard before getting Denied.
+            List<PacketRef> refs = new ArrayList<>();
+            for (int i = 0; i < 16; i++) {
+                LeaseResult result = allocator.allocate(8, tag());
+                if (result instanceof LeaseResult.Granted g) {
+                    refs.add(g.packetRef());
+                }
+            }
+            // All 128 bytes consumed (4 shards x 32 bytes, each with 4 x 8-byte allocations)
+            // Next allocation should be Denied — all shards full
             LeaseResult result = allocator.allocate(8, tag());
             assertInstanceOf(LeaseResult.Denied.class, result);
 
-            a.release();
-            b.release();
+            refs.forEach(PacketRef::release);
         }
     }
 
