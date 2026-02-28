@@ -2,7 +2,6 @@ package com.acme.finops.gateway.transport.http;
 
 import com.acme.finops.gateway.memory.AllocationDeniedException;
 import com.acme.finops.gateway.memory.AllocationTag;
-import com.acme.finops.gateway.memory.LeaseResult;
 import com.acme.finops.gateway.memory.PacketAllocator;
 import com.acme.finops.gateway.memory.PacketRef;
 import com.acme.finops.gateway.transport.api.InboundPacket;
@@ -43,8 +42,6 @@ import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
 
-import java.lang.foreign.MemorySegment;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
@@ -293,31 +290,21 @@ public final class NettyOtlpHttpAdapter implements OtlpHttpProtobufAdapter {
         if (buf.isDirect() && buf.hasMemoryAddress()) {
             return new NettyPacketRefImpl(buf, signalKind, ProtocolKind.OTLP_HTTP_PROTO);
         }
-        return copyHeapToAllocator(buf, signalKind);
+        return copyToDirect(buf, signalKind);
     }
 
-    private PacketRef copyHeapToAllocator(ByteBuf buf, SignalKind signalKind) {
+    private PacketRef copyToDirect(ByteBuf buf, SignalKind signalKind) {
         int readable = buf.readableBytes();
-        LeaseResult lease = packetAllocator.allocate(readable, allocationTagFor(signalKind));
-
-        PacketRef ref = switch (lease) {
-            case LeaseResult.Granted granted -> granted.packetRef();
-            case LeaseResult.Denied denied -> throw new AllocationDeniedException(denied.reasonCode());
-        };
-
+        if (readable == 0) {
+            throw new IllegalArgumentException("empty payload");
+        }
+        ByteBuf direct = io.netty.buffer.PooledByteBufAllocator.DEFAULT.directBuffer(readable, readable);
         try {
-            MemorySegment dst = ref.segment().asSlice(ref.offset(), readable);
-            ByteBuffer nio = dst.asByteBuffer();
-            nio.clear();
-            nio.limit(readable);
-            buf.getBytes(buf.readerIndex(), nio);
-            return ref;
-        } catch (Throwable t) {
-            try {
-                ref.release();
-            } catch (Throwable ignored) {
-            }
-            throw t;
+            direct.writeBytes(buf, buf.readerIndex(), readable);
+            // NettyPacketRefImpl retains the ByteBuf; finally releases our allocation ref
+            return new NettyPacketRefImpl(direct, signalKind, ProtocolKind.OTLP_HTTP_PROTO);
+        } finally {
+            direct.release();
         }
     }
 
