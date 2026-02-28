@@ -227,11 +227,12 @@ public final class NettyGatewayProxyMain {
         AsyncIngressDispatcher dispatcher = null;
         AtomicReference<OtlpProcessingPipeline> pipelineRef = new AtomicReference<>();
         if (queueEnabled) {
-            int queueCapacity = EnvVars.getIntClamped(GatewayEnvKeys.GATEWAY_QUEUE_CAPACITY, 32_768, 256, 1_000_000);
+            int queueCapacity = EnvVars.getIntClamped(GatewayEnvKeys.GATEWAY_QUEUE_CAPACITY,
+                GatewayDefaults.DEFAULT_QUEUE_CAPACITY, 256, 1_000_000);
             int queueShards = EnvVars.getIntClamped(GatewayEnvKeys.GATEWAY_QUEUE_SHARDS,
-                Runtime.getRuntime().availableProcessors(), 1, 128);
+                GatewayDefaults.DEFAULT_QUEUE_SHARDS, 1, 128);
             int queueWorkers = EnvVars.getIntClamped(GatewayEnvKeys.GATEWAY_QUEUE_WORKERS,
-                Runtime.getRuntime().availableProcessors(), 1, 256);
+                GatewayDefaults.DEFAULT_QUEUE_WORKERS, 1, 256);
             int low = EnvVars.getIntClamped(GatewayEnvKeys.GATEWAY_BACKPRESSURE_LOW, queueCapacity / 2, 1, queueCapacity);
             int high = EnvVars.getIntClamped(GatewayEnvKeys.GATEWAY_BACKPRESSURE_HIGH, Math.max(low, (queueCapacity * 3) / 4), low, queueCapacity);
             int critical = EnvVars.getIntClamped(GatewayEnvKeys.GATEWAY_BACKPRESSURE_CRITICAL, Math.max(high, (queueCapacity * 9) / 10), high, queueCapacity);

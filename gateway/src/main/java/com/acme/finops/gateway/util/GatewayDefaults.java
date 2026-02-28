@@ -13,13 +13,18 @@ public final class GatewayDefaults {
     public static final int DEFAULT_SLAB_REGIONS = 8;
 
     // ---- Exporter ----
-    public static final int DEFAULT_MAX_INFLIGHT = 8192;
+    public static final int DEFAULT_MAX_INFLIGHT = 16_384;
     public static final int DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
     public static final int DEFAULT_RESPONSE_TIMEOUT_MS = 10_000;
     public static final int HTTPS_DEFAULT_PORT = 443;
     public static final int HTTP_DEFAULT_PORT = 80;
-    public static final int DEFAULT_EXPORTER_POOL_SIZE = 64;
-    public static final int DEFAULT_EXPORTER_IO_THREADS = 0; // 0 = availableProcessors()
+    public static final int DEFAULT_EXPORTER_POOL_SIZE = 256;
+    public static final int DEFAULT_EXPORTER_IO_THREADS = 4;
+
+    // ---- Queue ----
+    public static final int DEFAULT_QUEUE_CAPACITY = 65_536;
+    public static final int DEFAULT_QUEUE_SHARDS = 16;
+    public static final int DEFAULT_QUEUE_WORKERS = 16;
 
     // ---- Netty transport ----
     public static final int DEFAULT_SO_BACKLOG = 1024;
