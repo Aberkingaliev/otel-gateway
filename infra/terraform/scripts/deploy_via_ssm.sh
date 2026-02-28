@@ -242,13 +242,20 @@ send_ssm_command() {
     --query 'Command.CommandId' \
     --output text)"
 
-  "${AWS_ARGS[@]}" ssm wait command-executed --command-id "${command_id}" --instance-id "${instance_id}" || true
-
-  local status
-  status="$("${AWS_ARGS[@]}" ssm get-command-invocation \
-    --command-id "${command_id}" \
-    --instance-id "${instance_id}" \
-    --query 'Status' --output text)"
+  # Poll until command completes (wait up to SSM_TIMEOUT + 120s buffer)
+  local poll_deadline=$(( $(date +%s) + SSM_TIMEOUT + 120 ))
+  local status="InProgress"
+  while [[ "${status}" == "InProgress" || "${status}" == "Pending" || "${status}" == "Delayed" ]]; do
+    if (( $(date +%s) >= poll_deadline )); then
+      log "WARN: poll deadline reached for command ${command_id}"
+      break
+    fi
+    sleep 15
+    status="$("${AWS_ARGS[@]}" ssm get-command-invocation \
+      --command-id "${command_id}" \
+      --instance-id "${instance_id}" \
+      --query 'Status' --output text 2>/dev/null || echo "InProgress")"
+  done
 
   local stdout
   local stderr
