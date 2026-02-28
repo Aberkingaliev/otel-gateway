@@ -199,6 +199,20 @@ class StripedPacketAllocatorTest {
     }
 
     @Test
+    void shouldAcceptRegionsPerSlabConstructor() {
+        try (StripedPacketAllocator allocator = new StripedPacketAllocator(4096, 4, 4)) {
+            PacketRef ref = granted(allocator.allocate(64, tag()));
+            assertEquals(64, ref.length());
+            ref.release();
+
+            AllocatorStats stats = allocator.stats();
+            assertEquals(1L, stats.allocCount());
+            assertEquals(1L, stats.releaseCount());
+            assertEquals(0L, stats.inUseBytes());
+        }
+    }
+
+    @Test
     void shouldRejectCapacityLessThanShardCount() {
         assertThrows(IllegalArgumentException.class,
             () -> new StripedPacketAllocator(3, 4));

@@ -10,6 +10,7 @@ public final class GatewayDefaults {
     // ---- Slab allocator ----
     public static final long DEFAULT_SLAB_SIZE_BYTES = 256L * 1024 * 1024;
     public static final int DEFAULT_ALLOCATOR_SHARDS = 4;
+    public static final int DEFAULT_SLAB_REGIONS = 8;
 
     // ---- Exporter ----
     public static final int DEFAULT_MAX_INFLIGHT = 8192;

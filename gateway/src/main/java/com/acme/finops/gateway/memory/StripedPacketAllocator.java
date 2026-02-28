@@ -18,6 +18,10 @@ public final class StripedPacketAllocator implements PacketAllocator {
     private final int mask;
 
     public StripedPacketAllocator(long totalCapacityBytes, int shardCount) {
+        this(totalCapacityBytes, shardCount, -1);
+    }
+
+    public StripedPacketAllocator(long totalCapacityBytes, int shardCount, int regionsPerSlab) {
         if (shardCount <= 0) {
             throw new IllegalArgumentException("shardCount must be positive, got " + shardCount);
         }
@@ -33,7 +37,11 @@ public final class StripedPacketAllocator implements PacketAllocator {
         this.shards = new SlabPacketAllocator[shardCount];
         long perShard = totalCapacityBytes / shardCount;
         for (int i = 0; i < shardCount; i++) {
-            shards[i] = new SlabPacketAllocator(perShard);
+            if (regionsPerSlab <= 0) {
+                shards[i] = new SlabPacketAllocator(perShard);
+            } else {
+                shards[i] = new SlabPacketAllocator(perShard, regionsPerSlab);
+            }
         }
     }
 
