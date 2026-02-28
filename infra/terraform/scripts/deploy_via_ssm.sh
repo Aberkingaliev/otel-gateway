@@ -319,6 +319,7 @@ YAML
 
 docker rm -f otel-upstream >/dev/null 2>&1 || true
 docker run -d --name otel-upstream --restart unless-stopped \
+  --log-opt max-size=50m --log-opt max-file=2 \
   -p 14328:14328 \
   -v /opt/finops/upstream-config.yaml:/etc/otelcol-contrib/config.yaml:ro \
   otel/opentelemetry-collector-contrib:0.119.0 \
@@ -365,6 +366,7 @@ fi
 
 docker rm -f finops-gateway >/dev/null 2>&1 || true
 docker run -d --name finops-gateway --restart unless-stopped \
+  --log-opt max-size=50m --log-opt max-file=2 \
   -p 4317:4317 \
   -p 4318:4318 \
   -p 9464:9464 \
@@ -517,7 +519,7 @@ metrics_pid=\$!
 run_gen() {
   local sig="\$1"
   local path="/v1/\${sig}"
-  docker run --rm "\${IMAGE}" "\${sig}" \
+  docker run --rm --log-opt max-size=10m --log-opt max-file=1 "\${IMAGE}" "\${sig}" \
     --otlp-http \
     --otlp-insecure \
     --otlp-endpoint "\${GATEWAY_IP}:4318" \
@@ -531,9 +533,11 @@ run_gen() {
     --telemetry-attributes "env=\\"soak\\""
 }
 
-run_gen traces >"\${ART_DIR}/telemetrygen-traces.log" 2>&1 & p1=\$!
-run_gen metrics >"\${ART_DIR}/telemetrygen-metrics.log" 2>&1 & p2=\$!
-run_gen logs >"\${ART_DIR}/telemetrygen-logs.log" 2>&1 & p3=\$!
+# Discard telemetrygen stdout (at 100K rps it generates ~20MB/s of output).
+# Only capture last 500 lines for diagnostics.
+run_gen traces 2>&1 | tail -500 >"\${ART_DIR}/telemetrygen-traces.log" & p1=\$!
+run_gen metrics 2>&1 | tail -500 >"\${ART_DIR}/telemetrygen-metrics.log" & p2=\$!
+run_gen logs 2>&1 | tail -500 >"\${ART_DIR}/telemetrygen-logs.log" & p3=\$!
 
 set +e
 wait \${p1}; rc1=\$?
