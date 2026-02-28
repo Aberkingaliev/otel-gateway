@@ -14,6 +14,7 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.pool.ChannelPoolHandler;
+import io.netty.channel.pool.FixedChannelPool;
 import io.netty.channel.pool.SimpleChannelPool;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.http.DefaultFullHttpRequest;
@@ -225,7 +226,11 @@ public final class AsyncOtlpHttpExporter implements AutoCloseable {
         String key = host + ":" + port;
         return pools.computeIfAbsent(key, k -> {
             Bootstrap perUri = bootstrap.clone().remoteAddress(host, port);
-            return new SimpleChannelPool(perUri, new ExporterChannelPoolHandler(host, port, https));
+            return new FixedChannelPool(
+                perUri,
+                new ExporterChannelPoolHandler(host, port, https),
+                poolSize
+            );
         });
     }
 
